@@ -1,71 +1,80 @@
+"""Run the Olist Data Vault notebook pipeline end to end, in layer order."""
+
+import argparse
+import logging
 import time
 from pathlib import Path
+
 import nbformat
 from nbclient import NotebookClient
 
-# Root project directory
-BASE_DIR = Path(
-    r"C:\Users\JacksonDivakarRajasi\OneDrive - JMAN Group Ltd\Documents\Python Folder\DuckDB Environment\Olist Eccomerce DuckDB"
-)
+PROJECT_ROOT = Path(__file__).resolve().parent
+NOTEBOOK_DIR = PROJECT_ROOT / "notebooks"
 
-# Exact relative paths based on your folder structure in execution order
+# Execution order: staging -> raw vault -> business vault -> information mart
 NOTEBOOK_PIPELINE = [
-    "Staging Layer/stg__landing.ipynb",
-    "Staging Layer/stg__prep.ipynb",
-    "Raw Data Vault/raw_vault_nb.ipynb",
-    "Business Vault/business_vault_bridge.ipynb",
-    "Business Vault/business_vault_enrichment_nb.ipynb",
-    "Business Vault/business_vault_pit_nb.ipynb",
-    "Information Mart/Dimension Tables/information_mart_dim.ipynb",
-    "Information Mart/Fact Tables/information_mart_fact.ipynb",
+    "01_staging/stg_landing.ipynb",
+    "01_staging/stg_prep.ipynb",
+    "02_raw_vault/raw_vault.ipynb",
+    "03_business_vault/bv_bridge.ipynb",
+    "03_business_vault/bv_enrichment.ipynb",
+    "03_business_vault/bv_pit.ipynb",
+    "04_information_mart/im_dim.ipynb",
+    "04_information_mart/im_fact.ipynb",
 ]
 
+CLOSE_CONNECTION_SOURCE = "if 'con' in locals():\n    con.close()"
 
-def run_notebook_pipeline(base_dir: Path, notebook_paths: list[str]) -> None:
-    pipeline_start = time.perf_counter()
-    print("Starting Olist Data Vault Notebook Pipeline...\n" + "=" * 60)
+log = logging.getLogger("orchestrator")
 
-    for idx, rel_path in enumerate(notebook_paths, start=1):
-        nb_path = base_dir / rel_path
-        if not nb_path.exists():
-            raise FileNotFoundError(f"Notebook not found: {nb_path}")
 
-        print(f"[{idx}/{len(notebook_paths)}] Running: {rel_path} ...")
-        step_start = time.perf_counter()
+def run_notebook(nb_path: Path, timeout: int, save_outputs: bool) -> None:
+    """Execute one notebook in its own directory, releasing the DuckDB lock afterwards."""
+    with nb_path.open("r", encoding="utf-8") as f:
+        nb = nbformat.read(f, as_version=4)
 
-        # 1. Read the notebook
-        with open(nb_path, "r", encoding="utf-8") as f:
-            nb = nbformat.read(f, as_version=4)
+    # Temporary final cell: close the DuckDB connection so the next notebook can open the file
+    nb.cells.append(nbformat.v4.new_code_cell(CLOSE_CONNECTION_SOURCE))
+    try:
+        NotebookClient(
+            nb,
+            timeout=timeout,
+            resources={"metadata": {"path": str(nb_path.parent)}},
+        ).execute()
+    finally:
+        nb.cells.pop()
 
-        # 2. Append a temporary cell to close the DuckDB connection and release the file lock
-        close_cell = nbformat.v4.new_code_cell(
-            "if 'con' in locals():\n    con.close()"
-        )
-        nb.cells.append(close_cell)
-
-        try:
-            # 3. Execute the notebook in its directory
-            client = NotebookClient(
-                nb,
-                timeout=600,
-                resources={"metadata": {"path": str(nb_path.parent)}},
-            )
-            client.execute()
-        finally:
-            # 4. Remove the temporary close cell before saving back to disk
-            nb.cells.pop()
-
-        # 5. Save the executed outputs back into the .ipynb file
-        with open(nb_path, "w", encoding="utf-8") as f:
+    if save_outputs:
+        with nb_path.open("w", encoding="utf-8") as f:
             nbformat.write(nb, f)
 
-        elapsed = time.perf_counter() - step_start
-        print(f"    -> Completed in {elapsed:.2f}s\n")
 
-    total_elapsed = time.perf_counter() - pipeline_start
-    print("=" * 60)
-    print(f"All {len(notebook_paths)} notebooks executed successfully in {total_elapsed:.2f}s!")
+def run_pipeline(notebooks: list[str], timeout: int = 600, save_outputs: bool = True) -> None:
+    paths = [NOTEBOOK_DIR / rel for rel in notebooks]
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        raise FileNotFoundError(f"Notebooks not found: {', '.join(map(str, missing))}")
+
+    start = time.perf_counter()
+    log.info("Starting Olist Data Vault pipeline (%d notebooks)", len(paths))
+    for idx, (rel, path) in enumerate(zip(notebooks, paths), start=1):
+        step_start = time.perf_counter()
+        log.info("[%d/%d] Running %s", idx, len(paths), rel)
+        run_notebook(path, timeout, save_outputs)
+        log.info("    completed in %.2fs", time.perf_counter() - step_start)
+    log.info("All %d notebooks executed in %.2fs", len(paths), time.perf_counter() - start)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--timeout", type=int, default=600, help="per-cell timeout in seconds")
+    parser.add_argument(
+        "--no-save", action="store_true", help="do not write executed outputs back to the notebooks"
+    )
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    run_pipeline(NOTEBOOK_PIPELINE, timeout=args.timeout, save_outputs=not args.no_save)
 
 
 if __name__ == "__main__":
-    run_notebook_pipeline(BASE_DIR, NOTEBOOK_PIPELINE)
+    main()

@@ -1,16 +1,19 @@
-.ipynb*
-.venv*
-# DuckDB database files
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.ipynb_checkpoints/
+
+# DuckDB warehouse (rebuilt by the pipeline)
+data/warehouse/*
+!data/warehouse/.gitkeep
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
 
-@"
-.venv/
-__pycache__/
-*.py[cod]
-*.duckdb
-*.db
-.env
-.ipynb_checkpoints/
-"@ | Set-Content .gitignore
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
