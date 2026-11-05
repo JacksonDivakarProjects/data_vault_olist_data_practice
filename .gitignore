@@ -1,0 +1,16 @@
+.ipynb*
+.venv*
+# DuckDB database files
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+
+@"
+.venv/
+__pycache__/
+*.py[cod]
+*.duckdb
+*.db
+.env
+.ipynb_checkpoints/
+"@ | Set-Content .gitignore

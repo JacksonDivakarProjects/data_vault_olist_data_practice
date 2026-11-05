@@ -1,0 +1,5 @@
+duckdb>=0.9.0
+pandas>=2.0.0
+nbclient>=0.8.0
+nbformat>=5.9.0
+ipykernel>=6.0.0
